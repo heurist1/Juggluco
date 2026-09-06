@@ -157,7 +157,7 @@ void	JCurve::shower(NVGcontext* vg,const Num *num,const float xpos,const float x
 	if(isNote(num->type)&&notes) {
 		const char *text=notes->gettext(num->mealptr);
 		if(*text) {
-			char notebuf[notemaxdisplay+4];
+			char notebuf[noteshortbuf];
 			shortnotetext(text,notebuf);
 			nvgTextAlign(vg,NVG_ALIGN_RIGHT|NVG_ALIGN_TOP);
 			nvgText(vg, xend,ypos,notebuf,notebuf+strlen(notebuf));

@@ -380,7 +380,7 @@ bool fexportnums(myfilep handle,int _unit,uint32_t starttime=0,uint32_t endtime=
 					}
 				}
 			if(valuetext)
-				fprintf(fp,"%d\t%d\t%u\t%s\t%s\t%g\t%s\n",oldest,index+numdatas[oldest]->getfirstpos(),num->gettime(),buf,zone,valuetext,label);
+				fprintf(fp,"%d\t%d\t%u\t%s\t%g\t%s\t%s\n",oldest,index+numdatas[oldest]->getfirstpos(),num->gettime(),buf,zone,valuetext,label);
 			else
 				fprintf(fp,"%d\t%d\t%u\t%s\t%g\t%g\t%s\n",oldest,index+numdatas[oldest]->getfirstpos(),num->gettime(),buf,zone,num->value,label);
 			return true;

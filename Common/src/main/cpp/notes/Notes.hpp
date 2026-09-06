@@ -19,6 +19,7 @@
 #pragma once
 
 #include "inout.hpp"
+#include "datbackup.hpp"
 #include <string.h>
 #include <algorithm>
 
@@ -28,20 +29,42 @@ inline static constexpr const char notesdat[]="notes.dat";
 constexpr const int notesstartsize=16384;
 constexpr const int notemaxlen=128;
 constexpr const int notemaxdisplay=10;
+// Buffer size required for shortnotetext(): notemaxdisplay code points
+// of up to 4 UTF-8 bytes each, plus "..." and the null terminator.
+constexpr const int noteshortbuf=notemaxdisplay*4+4;
 // The file is extended by this amount whenever it is full. notes.dat
 // is a sparse file, so the unused tail costs nothing on disk.
 constexpr const int notegrowsize=2*1024*1024;
 
-// Shorten text to notemaxdisplay characters, appending "..." when truncated.
-// buf must hold at least notemaxdisplay+4 bytes.
+// Shorten text to at most notemaxdisplay characters (UTF-8 code
+// points, sequences kept whole), appending "..." when truncated.
+// util.shortnote() on the Java side shortens the same way, so graph,
+// list and speech show the same prefix. buf must hold noteshortbuf
+// bytes.
 inline static void shortnotetext(const char* text, char* buf) {
     const int tlen = (int)strlen(text);
-    if(tlen > notemaxdisplay) {
-        memcpy(buf, text, notemaxdisplay);
-        buf[notemaxdisplay]='.'; buf[notemaxdisplay+1]='.'; buf[notemaxdisplay+2]='.'; buf[notemaxdisplay+3]='\0';
+    int chars=0;
+    int cut=0;
+    while(cut<tlen&&chars<notemaxdisplay) {
+        const unsigned char c=(unsigned char)text[cut];
+        int w=1;
+        if((c&0xE0)==0xC0)
+            w=2;
+        else if((c&0xF0)==0xE0)
+            w=3;
+        else if((c&0xF8)==0xF0)
+            w=4;
+        if(cut+w>tlen)
+            w=tlen-cut;      // truncated/corrupt tail: take the rest
+        cut+=w;
+        chars++;
+        }
+    if(cut<tlen) {
+        memcpy(buf,text,cut);
+        buf[cut]='.'; buf[cut+1]='.'; buf[cut+2]='.'; buf[cut+3]='\0';
         }
     else {
-        memcpy(buf, text, tlen+1);
+        memcpy(buf,text,tlen+1);
         }
     }
 
@@ -62,7 +85,10 @@ struct NoteEntry {
 };
 
 struct NoteHeader {
-    uint32_t count;
+    // Incremented on every mutation (add, in-place update, tombstone).
+    // Mirror connections remember the last version they sent, so this
+    // doubles as the change indicator for the sync.
+    uint32_t version;
     uint32_t datastart;    // byte offset from start of file to first NoteEntry
     uint32_t nextfree;     // byte offset from datastart to next free byte
     uint32_t capacity;     // total capacity of data area in bytes
@@ -104,7 +130,7 @@ public:
     Notes(): Mmap(globalbasedir, notesdat, notesstartsize) {
         if(auto *h=header()) {
             if(h->datastart==0) {
-                h->count=0;
+                h->version=0;
                 h->datastart=sizeof(NoteHeader);
                 h->nextfree=0;
                 }
@@ -168,7 +194,7 @@ public:
                 e->time = time;
                 memcpy(e->text, text, textlen);
                 e->text[textlen] = '\0';
-                h->count++;
+                h->version++;
                 return offset;
                 }
             offset += esz;
@@ -194,14 +220,15 @@ public:
         e->text[textlen] = '\0';
 
         h->nextfree += entrysz;
-        h->count++;
+        h->version++;
         return offset;
         }
 
     // Returns the offset actually storing the text. Equal-size updates
-    // happen in place; otherwise the old entry is tombstoned and the
-    // new text appended (or a tombstone slot reused), so offsets of
-    // other notes never change.
+    // happen in place; otherwise the new text is stored first (append or
+    // tombstone-slot reuse) and the old entry is tombstoned only after
+    // that succeeded, so a failed store never loses the old note. The
+    // offsets of other notes never change.
     uint32_t updatenote(uint32_t offset, uint32_t time, const char* text, uint16_t textlen) {
         if(!validlive(offset))
             return UINT32_MAX;
@@ -212,10 +239,16 @@ public:
             e->time = time;
             memcpy(e->text, text, textlen);
             e->text[textlen] = '\0';
+            header()->version++;
             return offset;
             }
+        // The old entry is still live here (time != 0), so the reuse scan
+        // in addnote cannot hand back the same slot.
+        const uint32_t newoff = addnote(time, text, textlen);
+        if(newoff == UINT32_MAX)
+            return UINT32_MAX;        // store failed: old note is kept
         removeat(offset);
-        return addnote(time, text, textlen);
+        return newoff;
         }
 
     // Tombstone the entry: offsets of all other notes remain valid.
@@ -223,6 +256,56 @@ public:
         if(!validlive(offset))
             return;
         entryat(offset)->time = 0;
-        header()->count--;
+        header()->version++;
+        }
+
+    // Mirror sync, sender side. Sends the data area and the header as
+    // named blocks for notes.dat, like updatemeal() does for the
+    // fixed-layout meals.dat. The receiver stores the blocks at the
+    // same file offsets, so Num.mealptr offsets of transferred note
+    // entries stay meaningful there. The data block goes first and the
+    // header last, so an interrupted transfer leaves the old consistent
+    // state. Returns 1 when sent, 2 when the receiver already has this
+    // version, 0 on failure.
+    int sendnotesdata(crypt_t *pass,Connect *connect,uint32_t &lastsent) {
+        const NoteHeader *h=header();
+        if(!h)
+            return 2;
+        if(h->version==lastsent)
+            return 2;
+        std::vector<subdata> vect;
+        vect.reserve(2);
+        if(h->nextfree)
+            vect.push_back({dataarea(),(int)h->datastart,(int)h->nextfree});
+        vect.push_back({reinterpret_cast<const senddata_t*>(h),0,(int)sizeof(NoteHeader)});
+        if(!connect->senddata(pass,vect,notesdat))
+            return 0;
+        lastsent=h->version;
+        return 1;
+        }
+
+    // Mirror sync, receiver side: called after the blocks for notes.dat
+    // were written through the generic file receiver. Extends the
+    // mapping when the file grew and re-derives the capacity from the
+    // actual mapping size (the transferred capacity belongs to the
+    // sender's file).
+    void received() {
+        const NoteHeader *h=header();
+        if(!h)
+            return;
+        const size_t want=(size_t)h->datastart+h->nextfree;
+        const size_t cursize=size();
+        if(want>cursize) {
+            extend(globalbasedir,notesdat,(int)want);
+            if(Mmap::data()==nullptr) {
+                extend(globalbasedir,notesdat,(int)cursize);
+                if(Mmap::data()==nullptr)
+                    return;
+                }
+            }
+        header()->capacity=size()-header()->datastart;
         }
     };
+
+// The one notes database, created in startmeals() (settings.cpp).
+extern Notes *notes;

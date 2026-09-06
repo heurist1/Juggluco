@@ -29,6 +29,7 @@ import android.content.DialogInterface;
 import android.graphics.Color;
 import android.os.Build;
 import android.text.Editable;
+import android.text.InputFilter;
 import android.text.InputType;
 import android.text.Selection;
 import android.view.inputmethod.EditorInfo;
@@ -206,6 +207,7 @@ private void shownoteoverlay(MainActivity act) {
     EnableControls(newnumview,false);
     notefield=new EditText(act);
     notefield.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_FLAG_MULTI_LINE);
+    notefield.setFilters(new InputFilter[]{util.notelengthfilter});
     notefield.setMinLines(3);
     notefield.setMaxLines(6);
     notefield.setImeOptions(EditorInfo.IME_ACTION_DONE);
@@ -224,10 +226,19 @@ private void shownoteoverlay(MainActivity act) {
         int timeSec=(int)(lasttime/1000L);
         if(text.length()>0) {
             int off=(existingOffset>=0)?existingOffset:noteOffset;
-            if(off>=0) off=Natives.updateNote(off,timeSec,text);
+            if(off>=0) {
+                off=Natives.updateNote(off,timeSec,text);
+                if(off<0) {
+                    // The old offset no longer points at a live note
+                    // (deleted or replaced by a mirror sync): keep the
+                    // typed text as a fresh note instead of dropping it.
+                    Log.i(LOG_ID,"updateNote failed for offset, storing as new note");
+                    off=Natives.addNote(timeSec,text);
+                    }
+                }
             else off=Natives.addNote(timeSec,text);
             noteOffset=off;
-            notesaved=true;
+            notesaved=off>=0;
         } else {
             int off=(existingOffset>=0)?existingOffset:noteOffset;
             if(off>=0) Natives.deleteNote(off);
@@ -271,16 +282,21 @@ void setnoteui(boolean isNote) {
         if(isNote) {
             valueedit.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE);
             valueedit.setMinEms(8);
+            valueedit.setFilters(new InputFilter[]{util.notelengthfilter});
         } else {
             valueedit.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
             valueedit.setMinEms(2);
+            if(origfilters!=null) valueedit.setFilters(origfilters);
         }
         notemode=isNote;
         return;
         }
     if(isNote) {
         hidekeyboard();
-        if(origKeyListener==null) origKeyListener=valueedit.getKeyListener();
+        if(origKeyListener==null) {
+            origKeyListener=valueedit.getKeyListener();
+            origfilters=valueedit.getFilters();
+            }
         valueedit.setKeyListener(null);
         valueedit.setCursorVisible(false);
         valueedit.setOnClickListener(v->{
@@ -294,6 +310,7 @@ void setnoteui(boolean isNote) {
     else {
         valueedit.setOnClickListener(null);
         if(origKeyListener!=null) valueedit.setKeyListener(origKeyListener);
+        if(origfilters!=null) valueedit.setFilters(origfilters);
         valueedit.setCursorVisible(true);
         editfocus.setedittext(valueedit);
         if(notemode) {
@@ -334,6 +351,7 @@ void closenumview() {
     notesaved=false;
     notemode=false;
     origKeyListener=null;
+    origfilters=null;
     source=null;
     timebutton=null;
     timeview=null;
@@ -352,6 +370,7 @@ Button notebutton;
 boolean notesaved=false;
 boolean notemode=false;
 android.text.method.KeyListener origKeyListener=null;
+InputFilter[] origfilters=null;
 CheckDirectionBox excludebox;
 public void  addnumberview(MainActivity activity, long hitptr) {
     final boolean oldnum=hitptr!=numio.newhit;
@@ -913,7 +932,18 @@ private boolean saveamount(Activity activity,TextView timeview,TextView value,in
                 if(strval.length()==0) { Natives.deleteNote(noteOff); noteOffset=-1; noteOff=-1; }
                 }
             else {
-                if(strval.length()>0) noteOff=Natives.updateNote(noteOff, (int)(lasttime/1000L), strval);
+                if(strval.length()>0) {
+                    noteOff=Natives.updateNote(noteOff, (int)(lasttime/1000L), strval);
+                    if(noteOff<0) {
+                        // The old offset no longer points at a live note
+                        // (deleted or replaced by a mirror sync): keep
+                        // the typed text as a fresh note instead of
+                        // dropping it.
+                        Log.i(LOG_ID,"updateNote failed for offset, storing as new note");
+                        noteOff=Natives.addNote((int)(lasttime/1000L), strval);
+                        }
+                    noteOffset=noteOff;
+                    }
                 }
             val=0;
         } else if(strval.length()>0) {

@@ -98,12 +98,18 @@ struct changednums {
     int len;
     struct numspan changed[maxchanged];
     uint32_t lastmeal;
-    senddata_t reserved[28];
+    // Last notes.dat version sent over this connection. Carved out of
+    // the reserved area: keeps the struct size and the offset of
+    // lastlastpos unchanged, and old backup.dat files have zeros here,
+    // which reads as "nothing sent yet".
+    uint32_t lastnotes;
+    senddata_t reserved[24];
     uint32_t lastlastpos;
     void clear() {
         len=1;
         changed[0]={};
         lastmeal=0;
+        lastnotes=0;
         lastlastpos=0;
         }
     };

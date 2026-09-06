@@ -154,8 +154,9 @@ template <class TX,class TY> void NumDisplay::showNums(JCurve&jcurve, const TX &
 				if(isNote(it->type) && notes) {
 					const char* text = notes->gettext(it->mealptr);
 					if(*text) {
-						shortnotetext(text, buf);
-						nvgText(vg, xpos, ypos, buf, buf+strlen(buf));
+						char notebuf[noteshortbuf];
+						shortnotetext(text, notebuf);
+						nvgText(vg, xpos, ypos, notebuf, notebuf+strlen(notebuf));
 					} else {
 						nvgText(vg, xpos,ypos, buf, buf+ snprintf(buf,maxbuf,"%g",it->value));
 					}
@@ -230,7 +231,7 @@ template <class TX,class TY> void NumDisplay::showNums(JCurve&jcurve, const TX &
                         const int maxbuf= label.size()+5;
                         char rtllabel[maxbuf];
                         rtl_to_logical_utf8(label.data(), rtllabel,maxbuf) ;
- 					char valbuf[notemaxdisplay+4];
+ 					char valbuf[noteshortbuf];
  					if(isNote(it->type)&&notes) {
  						const char *text=notes->gettext(it->mealptr);
  						if(*text)

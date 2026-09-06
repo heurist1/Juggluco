@@ -23,8 +23,9 @@ inline float carboWeight(uint32_t type) {
 	}
 
 extern int notetype;
+// notetype < 0 means "no note label configured": never match.
 inline bool isNote(uint32_t type) {
-	return (int)type==notetype;
+	return notetype>=0&&(int)type==notetype;
 	}
 // Labels configured as Comments (kind 4) in the LibreView settings are
 // uploaded as label-comment entries ("Label value"). This excludes the

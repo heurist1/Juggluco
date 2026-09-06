@@ -20,6 +20,7 @@
 
 
 #include "nums/numdata.hpp"
+#include "notes/Notes.hpp"
 #include <vector>
 std::vector<Numdata*> numdatas;
 
@@ -69,12 +70,18 @@ extern void checker();
 int updatenums(crypt_t*pass,Connect *connect,struct changednums *nums,int ind,bool sendnotes) {
    int ret=0;
    for(int i=0;i<numdatas.size();i++) {
-      if(int subret=numdatas[i]->update(pass,connect,nums,ind,sendnotes)) 
+      if(int subret=numdatas[i]->update(pass,connect,nums,ind,sendnotes))
          ret|=subret;
       else
          return 0;
       }
    if(int did=meals->datameal()->updatemeal(pass,connect,nums[1].lastmeal)) {
+      if(sendnotes&&notes) {
+         if(int didnotes=notes->sendnotesdata(pass,connect,nums[0].lastnotes))
+            did|=didnotes;
+         else
+            return 0;
+         }
       return ret|did;
       }
    return 0;

@@ -274,6 +274,17 @@ int startmeals() {
     return 0;
     }
 
+// Called on the receiving side of a mirror connection after blocks for
+// notes.dat arrived through the generic file receiver: the in-memory
+// mapping has to cover the (possibly grown) file again.
+void notesreceived(const char *name) {
+    if(notes==nullptr)
+        return;
+    if(strcmp(name,notesdat))
+        return;
+    notes->received();
+    }
+
 static void doversionupdate() {
       if(settings->data()->initVersion<30) {
          if(settings->data()->initVersion<27) {
